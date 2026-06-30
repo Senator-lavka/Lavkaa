@@ -1,0 +1,148 @@
+import React, { useEffect, useMemo, useState } from 'react'
+import { createRoot } from 'react-dom/client'
+import { ShoppingBasket, Plus, Minus, Trash2, Lock, Upload, Leaf, Image as ImageIcon } from 'lucide-react'
+import { supabase, isSupabaseConfigured, PRODUCT_BUCKET } from './supabase.js'
+import './styles.css'
+
+const OWNER_USERNAME = import.meta.env.VITE_OWNER_USERNAME || 'Senat9r'
+const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || 'senator777'
+
+const demoProducts = [
+  {
+    id: 'demo-1',
+    name: 'Малина свежая 500 г',
+    description: 'Сочная ягода для варенья, чая и десертов.',
+    price: 520,
+    stock: 8,
+    image_urls: ['https://images.unsplash.com/photo-1577069861033-55d04cec4ef5?q=80&w=1200&auto=format&fit=crop']
+  },
+  {
+    id: 'demo-2',
+    name: 'Сыр фермерский 300 г',
+    description: 'Нежный сыр к завтраку и в подарок.',
+    price: 390,
+    stock: 4,
+    image_urls: ['https://images.unsplash.com/photo-1486297678162-eb2a19b0a32d?q=80&w=1200&auto=format&fit=crop']
+  },
+  {
+    id: 'demo-3',
+    name: 'Варенье малиновое 250 мл',
+    description: 'Домашний вкус, густая ягода, приятная сладость.',
+    price: 450,
+    stock: 0,
+    image_urls: ['https://images.unsplash.com/photo-1563805042-7684c019e1cb?q=80&w=1200&auto=format&fit=crop']
+  }
+]
+
+function money(value) { return `${Number(value || 0).toLocaleString('ru-RU')} ₽` }
+function safeImages(product) {
+  if (Array.isArray(product.image_urls) && product.image_urls.length) return product.image_urls
+  if (product.image_url) return [product.image_url]
+  return ['https://images.unsplash.com/photo-1542838132-92c53300491e?q=80&w=1200&auto=format&fit=crop']
+}
+
+function ProductCard({ product, cartQty, onAdd, onRemove }) {
+  const [photo, setPhoto] = useState(0)
+  const images = safeImages(product)
+  const inStock = Number(product.stock) > 0
+  return <article className="product-card">
+    <div className="photo-wrap">
+      <img src={images[photo]} alt={product.name} />
+      <span className={inStock ? 'badge ok' : 'badge no'}>{inStock ? 'В наличии' : 'Нет в наличии'}</span>
+      {images.length > 1 && <div className="dots">{images.map((_, i) => <button key={i} className={i===photo?'active':''} onClick={() => setPhoto(i)} />)}</div>}
+    </div>
+    <div className="product-body">
+      <h3>{product.name}</h3>
+      {product.description && <p>{product.description}</p>}
+      <div className="row"><b>{money(product.price)}</b><span>Остаток: {product.stock} шт.</span></div>
+      <div className="buy-row">
+        {cartQty > 0 && <button className="round" onClick={() => onRemove(product)}><Minus size={18}/></button>}
+        {cartQty > 0 && <span className="qty">{cartQty}</span>}
+        <button className="add" disabled={!inStock || cartQty >= product.stock} onClick={() => onAdd(product)}>
+          {inStock ? 'В корзину' : 'Нет в наличии'}
+        </button>
+      </div>
+    </div>
+  </article>
+}
+
+function Shop() {
+  const [products, setProducts] = useState(demoProducts)
+  const [loading, setLoading] = useState(false)
+  const [cart, setCart] = useState({})
+
+  async function loadProducts() {
+    if (!isSupabaseConfigured) return
+    setLoading(true)
+    const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false })
+    if (!error && data) setProducts(data)
+    setLoading(false)
+  }
+  useEffect(() => { window.Telegram?.WebApp?.ready?.(); loadProducts() }, [])
+
+  const cartItems = useMemo(() => Object.entries(cart).map(([id, qty]) => {
+    const product = products.find(p => String(p.id) === String(id)); return product ? { product, qty } : null
+  }).filter(Boolean), [cart, products])
+  const total = cartItems.reduce((sum, item) => sum + Number(item.product.price) * item.qty, 0)
+
+  function add(product) { setCart(c => ({ ...c, [product.id]: Math.min((c[product.id] || 0) + 1, product.stock) })) }
+  function remove(product) { setCart(c => { const next = { ...c }; next[product.id] = (next[product.id] || 0) - 1; if (next[product.id] <= 0) delete next[product.id]; return next }) }
+  function makeOrder() {
+    const lines = cartItems.map(({ product, qty }) => `• ${product.name} — ${qty} шт. × ${money(product.price)} = ${money(qty * product.price)}`)
+    const text = `Достопочтенный Сенатор!\n\nХочу оформить заказ.\n\n${lines.join('\n')}\n\nИтоговая стоимость: ${money(total)}`
+    window.open(`https://t.me/${OWNER_USERNAME}?text=${encodeURIComponent(text)}`, '_blank')
+  }
+
+  return <main className="app">
+    <header className="hero"><div><span className="eyebrow"><Leaf size={16}/> Фермерская лавка</span><h1>Лавка Сенатора</h1><p>Свежие продукты, домашние заготовки и честный остаток по каждому товару.</p></div><ShoppingBasket size={34}/></header>
+    {!isSupabaseConfigured && <div className="notice">Сейчас включены демо-товары. После вставки ключей Supabase появятся твои товары из базы.</div>}
+    {loading ? <div className="empty">Загружаю товары…</div> : <section className="grid">{products.map(p => <ProductCard key={p.id} product={p} cartQty={cart[p.id] || 0} onAdd={add} onRemove={remove}/>)}</section>}
+    <aside className="cart"><h2>Корзина</h2>{cartItems.length === 0 ? <p>Пока пусто. Добавь продукты из лавки.</p> : <>{cartItems.map(({product, qty}) => <div className="cart-line" key={product.id}><span>{product.name}<small> × {qty}</small></span><b>{money(product.price*qty)}</b></div>)}<div className="total"><span>Итого</span><b>{money(total)}</b></div><button className="order" onClick={makeOrder}>Оформить заказ</button></>}</aside>
+  </main>
+}
+
+function Admin() {
+  const [authorized, setAuthorized] = useState(localStorage.getItem('admin_ok') === 'yes')
+  const [password, setPassword] = useState('')
+  const [products, setProducts] = useState([])
+  const [form, setForm] = useState({ name:'', description:'', price:'', stock:'' })
+  const [files, setFiles] = useState([])
+  const [busy, setBusy] = useState(false)
+
+  async function load() { if (!isSupabaseConfigured) return; const {data} = await supabase.from('products').select('*').order('created_at',{ascending:false}); setProducts(data || []) }
+  useEffect(() => { if (authorized) load() }, [authorized])
+  function login(e){ e.preventDefault(); if(password === ADMIN_PASSWORD){ localStorage.setItem('admin_ok','yes'); setAuthorized(true) } else alert('Неверный пароль') }
+
+  async function uploadFiles() {
+    const urls = []
+    for (const file of files) {
+      const ext = file.name.split('.').pop() || 'jpg'
+      const path = `${crypto.randomUUID()}.${ext}`
+      const { error } = await supabase.storage.from(PRODUCT_BUCKET).upload(path, file, { upsert:false })
+      if (error) throw error
+      const { data } = supabase.storage.from(PRODUCT_BUCKET).getPublicUrl(path)
+      urls.push(data.publicUrl)
+    }
+    return urls
+  }
+  async function addProduct(e){
+    e.preventDefault(); if(!isSupabaseConfigured) return alert('Supabase ещё не подключен')
+    setBusy(true)
+    try {
+      const image_urls = await uploadFiles()
+      const { error } = await supabase.from('products').insert({ name:form.name, description:form.description, price:Number(form.price), stock:Number(form.stock), image_urls })
+      if (error) throw error
+      setForm({ name:'', description:'', price:'', stock:'' }); setFiles([]); await load(); alert('Товар добавлен')
+    } catch (err) { alert(err.message || 'Ошибка') } finally { setBusy(false) }
+  }
+  async function deleteProduct(id){ if(!confirm('Удалить товар?')) return; await supabase.from('products').delete().eq('id', id); await load() }
+  async function updateStock(id, stock){ await supabase.from('products').update({stock:Number(stock)}).eq('id', id); await load() }
+
+  if (!authorized) return <main className="admin"><form className="login" onSubmit={login}><Lock/><h1>Админка лавки</h1><p>Введи пароль из Vercel переменной VITE_ADMIN_PASSWORD.</p><input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Пароль"/><button>Войти</button></form></main>
+  return <main className="admin"><header className="admin-head"><h1>Админка лавки</h1><a href="/">Открыть магазин</a></header>{!isSupabaseConfigured && <div className="notice">Нет ключей Supabase. Добавь переменные в Vercel.</div>}
+    <form className="panel" onSubmit={addProduct}><h2>Добавить товар</h2><input required placeholder="Название, например: Сыр фермерский 300 г" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/><textarea placeholder="Описание" value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/><div className="two"><input required type="number" placeholder="Цена" value={form.price} onChange={e=>setForm({...form,price:e.target.value})}/><input required type="number" placeholder="Остаток" value={form.stock} onChange={e=>setForm({...form,stock:e.target.value})}/></div><label className="file"><Upload/> Выбрать несколько фото <input type="file" multiple accept="image/*" onChange={e=>setFiles([...e.target.files])}/></label>{files.length>0 && <p>{files.length} фото выбрано</p>}<button disabled={busy}>{busy?'Сохраняю…':'Добавить товар'}</button></form>
+    <section className="panel"><h2>Товары</h2>{products.map(p=><div className="admin-item" key={p.id}><div>{safeImages(p).slice(0,3).map((img,i)=><img key={i} src={img}/>)}<div><b>{p.name}</b><small>{money(p.price)}</small></div></div><input type="number" defaultValue={p.stock} onBlur={e=>updateStock(p.id,e.target.value)}/><button className="danger" onClick={()=>deleteProduct(p.id)}><Trash2 size={16}/></button></div>)}</section>
+  </main>
+}
+function App(){ return location.pathname.startsWith('/admin') ? <Admin/> : <Shop/> }
+createRoot(document.getElementById('root')).render(<App />)
